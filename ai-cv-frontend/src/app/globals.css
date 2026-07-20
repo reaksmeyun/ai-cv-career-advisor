@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+/*
+ * AI CV Career Advisor — global design system (Stage 1)
+ * Tailwind v4 uses CSS-first configuration: tokens declared in @theme
+ * become utilities automatically (e.g. --color-primary -> bg-primary,
+ * text-primary, border-primary; --radius-card -> rounded-card).
+ */
+@theme {
+  /* Brand + semantic colors */
+  --color-primary: #2563eb; /* Primary blue */
+  --color-primary-hover: #1d4ed8;
+  --color-navy: #172554; /* Dark navy */
+  --color-ai: #7c3aed; /* AI purple */
+  --color-accent: #06b6d4; /* Accent cyan */
+
+  --color-success: #16a34a; /* Success green */
+  --color-warning: #f59e0b; /* Warning orange */
+  --color-error: #dc2626; /* Error red */
+
+  --color-background: #f8fafc; /* Page background */
+  --color-card: #ffffff; /* White card */
+  --color-ink: #111827; /* Dark text */
+  --color-muted: #64748b; /* Secondary text */
+  --color-border: #e2e8f0; /* Border */
+
+  /* Radii */
+  --radius-card: 20px; /* Main card */
+  --radius-card-sm: 16px; /* Small card */
+  --radius-button: 12px; /* Button */
+  --radius-input: 12px; /* Input */
+
+  /* Layout */
+  --max-width-page: 1280px;
+
+  /* Fonts (wired to next/font CSS variables in layout.tsx) */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, Arial, sans-serif;
+  --font-khmer: var(--font-kantumruy), var(--font-inter), ui-sans-serif,
+    system-ui, sans-serif;
+}
+
+/* AI brand gradient — usable as bg-ai-gradient / text on it */
+@utility bg-ai-gradient {
+  background-image: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+}
+
+/* Gradient text helper for headline accents */
+@utility text-ai-gradient {
+  background-image: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+/* Khmer script helper for optional KH content */
+@utility font-khmer {
+  font-family: var(--font-khmer);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* Prevent horizontal scrolling on any viewport (responsive requirement) */
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Accessible, consistent focus ring for keyboard navigation */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Analysis loading: CV document scan line sweeps top-to-bottom */
+@keyframes cv-scan {
+  from {
+    top: 8%;
+  }
+  to {
+    top: 88%;
+  }
+}
+@utility animate-cv-scan {
+  animation: cv-scan 1.8s ease-in-out infinite alternate;
+}
+
+/* Analysis loading: AI gradient bar shimmer (decorative feedback only) */
+@keyframes ai-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@utility animate-ai-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-primary),
+    var(--color-ai),
+    var(--color-accent),
+    var(--color-ai),
+    var(--color-primary)
+  );
+  background-size: 200% 100%;
+  animation: ai-shimmer 2s linear infinite;
+}
+
+/* Clean print layout: white page, no shadows, avoid splitting cards awkwardly */
+@media print {
+  body {
+    background: #fff !important;
+    overflow-x: visible;
+  }
+  main {
+    padding: 0 !important;
+  }
+  .rounded-card,
+  .rounded-card-sm {
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+}
+
+/* Analysis loading: indeterminate progress bar segment sliding across */
+@keyframes indeterminate-bar {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+@utility animate-indeterminate {
+  animation: indeterminate-bar 1.6s ease-in-out infinite;
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

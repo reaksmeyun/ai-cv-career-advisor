@@ -1,0 +1,19 @@
+# Prebuilt CPU wheels for llama-cpp-python (no local compiler needed).
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
+fastapi
+uvicorn
+python-multipart
+pydantic
+
+# AI model runtime (GGUF via llama.cpp) + JSON handling.
+llama-cpp-python
+huggingface-hub
+json-repair
+
+# Document extraction.
+pypdf
+python-docx
+pdf2image
+pillow
+pytesseract
