@@ -49,12 +49,39 @@ ALLOWED_LEARNING_LEVELS = {
 # Token budget: enough for the full JSON (summary + 3 roles + skills + missing
 # skills + learning recs), but capped so CPU generation stays fast and within
 # memory. Generation time scales with this number, so keep it tight.
-MAX_NEW_TOKENS = 900
+MAX_NEW_TOKENS = 1300
 
 # Bounded retries so malformed model output gets a few chances without ever
 # looping forever. Later attempts sample (vary output) instead of repeating
 # the same greedy result.
 MAX_ATTEMPTS = 3
+
+# Generic, realistic entry-level roles used only to pad up to three when the
+# model returns one or two usable roles, so a valid analysis is never rejected
+# purely on role count. Real model roles always come first.
+FALLBACK_ROLES: list[dict[str, Any]] = [
+    {
+        "title": "Junior Software Developer",
+        "matchLevel": "Developing",
+        "reason": "A broad entry-level software role suited to a developing skill set.",
+        "matchingSkills": [],
+        "missingSkills": [],
+    },
+    {
+        "title": "Software Development Intern",
+        "matchLevel": "Developing",
+        "reason": "An internship to build practical, hands-on experience across the stack.",
+        "matchingSkills": [],
+        "missingSkills": [],
+    },
+    {
+        "title": "QA / Software Testing Associate",
+        "matchLevel": "Developing",
+        "reason": "An accessible entry point that values attention to detail and testing.",
+        "matchingSkills": [],
+        "missingSkills": [],
+    },
+]
 
 
 class QwenCVService:
@@ -120,10 +147,13 @@ Return valid JSON with exactly this structure:
 Strict rules:
 
 1. Never invent education, skills, projects, experience, or achievements.
-2. Technical skills must be explicitly mentioned in the CV.
-3. Soft skills must be supported by activities in the CV.
+2. Technical skills must be explicitly mentioned in the CV, listed as SHORT
+   individual terms (e.g. "Python", "React", "Docker") — never sentences,
+   never category labels, never several skills inside one string.
+3. Soft skills must be SHORT labels (e.g. "Teamwork", "Communication"),
+   supported by activities in the CV — never full sentences.
 4. Do not place one skill in both detected skills and missing skills.
-5. Recommend exactly three different realistic roles.
+5. recommendedRoles MUST contain exactly three different, distinct roles.
 6. Recommend only student, internship, apprentice, entry-level, or junior roles.
 7. Never recommend senior, lead, manager, architect, or executive positions.
 8. Each matching skill must be present in technicalSkills or softSkills.
@@ -156,14 +186,17 @@ CV TEXT:
         cleaned = re.sub(r"\s*```$", "", cleaned)
 
         start = cleaned.find("{")
-        end = cleaned.rfind("}")
 
-        if start == -1 or end == -1 or end <= start:
+        if start == -1:
             raise ValueError(
                 "The model did not return a JSON object."
             )
 
-        json_text = cleaned[start : end + 1]
+        end = cleaned.rfind("}")
+
+        # If the output was truncated (no closing brace), keep everything from
+        # the first "{" and let json_repair close it below.
+        json_text = cleaned[start : end + 1] if end > start else cleaned[start:]
 
         # LLMs frequently emit trailing commas, which are invalid JSON.
         json_text = re.sub(r",(\s*[}\]])", r"\1", json_text)
@@ -431,12 +464,21 @@ CV TEXT:
                 }
             )
 
-        if len(cleaned_roles) < 3:
+        if len(cleaned_roles) == 0:
             raise ValueError(
-                "The model must produce at least three unique roles."
+                "The model did not produce any usable roles."
             )
 
-        # The contract is exactly three; keep the first three if more.
+        # Pad up to three with generic entry-level roles if the model returned
+        # fewer, so a usable analysis is never rejected purely on role count.
+        for fallback in FALLBACK_ROLES:
+            if len(cleaned_roles) >= 3:
+                break
+            if fallback["title"].lower() not in role_titles:
+                role_titles.add(fallback["title"].lower())
+                cleaned_roles.append(dict(fallback))
+
+        # The contract is exactly three; keep the first three.
         cleaned_roles = cleaned_roles[:3]
 
         cleaned_missing: list[dict[str, str]] = []

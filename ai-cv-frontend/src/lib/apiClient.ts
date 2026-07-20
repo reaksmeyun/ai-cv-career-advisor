@@ -23,11 +23,15 @@ async function handleResponse(
 ): Promise<AnalyzeOutcome> {
   if (!res.ok) {
     if (res.status === 422) {
-      // Validation / extraction / malformed-model errors.
+      // Client-side input problems: unreadable file, or too-short/invalid text.
       return {
         ok: false,
-        error: kind === "file" ? messages.unreadableDocument : messages.invalidModelResponse,
+        error: kind === "file" ? messages.unreadableDocument : messages.shortInput,
       };
+    }
+    if (res.status === 503) {
+      // The AI produced an incomplete/invalid result after its retries.
+      return { ok: false, error: messages.invalidModelResponse };
     }
     // 500 and everything else → the service could not complete the analysis.
     return { ok: false, error: messages.aiUnavailable };

@@ -114,7 +114,7 @@ export function AnalysisLoading({ onCancel, done = false }: AnalysisLoadingProps
       <p className="mt-2 max-w-md text-sm text-muted">
         {done
           ? "Opening your results…"
-          : "The AI model runs on the server and can take up to a minute or two. Please keep this page open."}
+          : "The AI model runs on the server and can take a few minutes. Please keep this page open."}
       </p>
 
       {/* Percentage + gradual fill bar */}
@@ -190,7 +190,7 @@ export function AnalysisLoading({ onCancel, done = false }: AnalysisLoadingProps
       {!done && elapsed >= REASSURE_AFTER_S && (
         <p className="mt-6 max-w-md rounded-card-sm border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-muted">
           Still working — your CV is being analyzed by the AI model. This is
-          normal and can take a minute or two. Please don&apos;t close the page.
+          normal and can take a few minutes. Please don&apos;t close the page.
         </p>
       )}
 

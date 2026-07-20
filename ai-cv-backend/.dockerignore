@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+uvicorn_test.log
+gguf_download.log
+.git/
+.gitignore
+.pytest_cache/
+.env
+.env.*

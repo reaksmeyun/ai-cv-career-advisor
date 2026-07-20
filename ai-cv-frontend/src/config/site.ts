@@ -16,7 +16,6 @@ export const siteConfig = {
     { label: "Analyze CV", href: "/analyze" },
     { label: "How It Works", href: "/#how-it-works" },
     { label: "Career Resources", href: "/#resources" },
-    { label: "About", href: "/#about" },
   ] satisfies NavItem[],
   /** Primary call-to-action used in the header. */
   primaryCta: { label: "Try CV Analyzer", href: "/analyze" } satisfies NavItem,

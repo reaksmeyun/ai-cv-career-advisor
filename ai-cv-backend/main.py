@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
-import torch
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,13 +25,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Allow the local Next.js frontend to call this backend.
+# Allowed frontend origins. Set ALLOWED_ORIGINS (comma-separated) in production
+# to include your deployed frontend URL, e.g.
+#   ALLOWED_ORIGINS=https://your-app.vercel.app
+_default_origins = "http://localhost:3000,http://127.0.0.1:3000"
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -58,7 +64,7 @@ def health() -> HealthResponse:
     return HealthResponse(
         status="healthy",
         model=MODEL_NAME,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        device="cpu",
     )
 
 
@@ -78,8 +84,9 @@ async def analyze_text(
         )
 
     except ValueError as error:
+        # The model could not produce a valid analysis (not a client error).
         raise HTTPException(
-            status_code=422,
+            status_code=503,
             detail=str(error),
         ) from error
 
@@ -109,16 +116,30 @@ async def analyze_file(
     try:
         file_bytes = await file.read()
 
-        extraction = await asyncio.to_thread(
-            extract_document_text,
-            file.filename or "",
-            file_bytes,
-        )
+        # Extraction problems are client-side (bad/unreadable file) -> 422.
+        try:
+            extraction = await asyncio.to_thread(
+                extract_document_text,
+                file.filename or "",
+                file_bytes,
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=str(error),
+            ) from error
 
-        analysis = await asyncio.to_thread(
-            qwen_service.analyze,
-            extraction.text,
-        )
+        # Analysis problems are AI-side (incomplete model output) -> 503.
+        try:
+            analysis = await asyncio.to_thread(
+                qwen_service.analyze,
+                extraction.text,
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=503,
+                detail=str(error),
+            ) from error
 
         return AnalyzeFileResponse(
             filename=file.filename or "uploaded-cv",
@@ -128,11 +149,8 @@ async def analyze_file(
             analysis=analysis,
         )
 
-    except ValueError as error:
-        raise HTTPException(
-            status_code=422,
-            detail=str(error),
-        ) from error
+    except HTTPException:
+        raise
 
     except Exception as error:
         print(

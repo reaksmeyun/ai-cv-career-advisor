@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI CV Career Advisor — Frontend
 
-## Getting Started
+The Next.js (App Router) web UI for the AI CV Career Advisor. It collects the
+CV, calls the Python backend, validates + adapts the response, stores it in
+`sessionStorage`, and renders the career report. See the
+[project README](../README.md) for the full picture.
 
-First, run the development server:
+## Tech stack
+
+- **Next.js** (App Router) + **React** + **TypeScript** (strict, no `any`)
+- **Tailwind CSS** design-token system
+- **lucide-react** icons
+- **jsPDF** for local PDF export (lazy-loaded)
+- **Vitest** for unit tests
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env.local     # configure the backend URL
+npm run dev                    # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Environment variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | Base URL of the Python backend |
+| `NEXT_PUBLIC_USE_MOCK` | `false` | `true` = use built-in demo data, skip the backend |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+> Set `NEXT_PUBLIC_USE_MOCK=true` to demo the whole flow without running the
+> backend (useful for a quick UI walkthrough).
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start the dev server |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | ESLint |
+| `npm run test` | Run Vitest unit tests |
+| `npm run test:watch` | Vitest in watch mode |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Routes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Route | Description |
+|-------|-------------|
+| `/` | Homepage (hero, value cards, how-it-works, responsible-AI, about) |
+| `/analyze` | Paste/upload CV, validation, loading screen |
+| `/results` | Full analysis dashboard (Copy / Print / Download PDF) |
+| `/roles/[slug]` | Per-role details: projects + career roadmap |
 
-## Deploy on Vercel
+## Project structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+src/
+├── app/                    # App Router routes (/, /analyze, /results, /roles/[slug])
+├── components/
+│   ├── ui/                 # Button, Card, Badge, Alert, EmptyState, SkillTag, …
+│   ├── layout/             # Header, Footer, MobileNav, SiteShell
+│   ├── home/               # Homepage sections
+│   ├── analyze/            # Analyzer panel, tabs, loading screen
+│   ├── results/            # Results dashboard + report sections
+│   └── roles/              # Role-details view
+├── lib/
+│   ├── apiClient.ts        # Calls /analyze-text and /analyze-file
+│   ├── adaptBackendAnalysis.ts  # Maps backend JSON → rich CareerAnalysis
+│   ├── analysisValidation.ts    # Runtime validation of the AI response
+│   ├── analysisStorage.ts       # Safe sessionStorage utilities
+│   ├── validation.ts       # CV text / file validation
+│   ├── reportText.ts       # Plain-text report (Copy)
+│   ├── reportPdf.ts        # jsPDF report (Download PDF)
+│   └── messages.ts         # Centralized user-facing messages
+├── types/analysis.ts       # CareerAnalysis type contract
+└── config/                 # site.ts (nav/brand), api.ts (backend URL)
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Notes
+
+- The frontend **never trusts raw AI output** — every response is validated
+  against the `CareerAnalysis` contract before display.
+- No CV content is stored permanently; results use `sessionStorage` only and are
+  cleared when you click **Analyze Another CV**.
