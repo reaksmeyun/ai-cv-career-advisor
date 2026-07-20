@@ -101,10 +101,11 @@ URL, and restart the Space. Your live site can now call the backend.
 
 ## Important notes
 
-- **Free HF CPU is 2 vCPU**, so an analysis may take **2–5 minutes**. If requests
-  fail with a **gateway/504 timeout**, the backend needs an async **job +
-  polling** pattern (submit → poll for the result) so no single HTTP request
-  stays open that long. Ask and this can be added.
+- **Free HF CPU is 2 vCPU**, so an analysis may take **2–5 minutes** — but the
+  backend already uses an async **job + polling** pattern: `POST /analyze-text`
+  / `POST /analyze-file` return a `jobId` immediately, and the frontend polls
+  `GET /jobs/{id}` until it's done. No single request stays open long enough to
+  hit a proxy timeout.
 - **The free Space sleeps** after inactivity; the next request triggers a cold
   start (image boot + model load, ~2–3 min) before it responds.
 - **No secrets in the frontend.** `NEXT_PUBLIC_*` values are public by design;

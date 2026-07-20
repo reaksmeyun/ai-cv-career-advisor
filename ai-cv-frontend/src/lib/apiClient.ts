@@ -8,73 +8,142 @@ export type AnalyzeOutcome =
   | { ok: true; analysis: CareerAnalysis }
   | { ok: false; error: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+type JobKind = "text" | "file";
+
+/** How often to poll the job status, and a safety cap on total wait. */
+const POLL_INTERVAL_MS = 2500;
+const MAX_POLL_MS = 10 * 60 * 1000;
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-/** Map an HTTP response into a validated analysis or a user-facing error. */
-async function handleResponse(
-  res: Response,
-  kind: "text" | "file",
+/** Sleep that rejects immediately if the signal aborts. */
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException("Aborted", "AbortError"));
+      },
+      { once: true },
+    );
+  });
+}
+
+function mapJobError(code: unknown, kind: JobKind): string {
+  if (code === 422) {
+    return kind === "file" ? messages.unreadableDocument : messages.shortInput;
+  }
+  if (code === 503) return messages.invalidModelResponse;
+  return messages.aiUnavailable;
+}
+
+/** Poll GET /jobs/{id} until the analysis finishes, errors, or times out. */
+async function pollJob(
+  jobId: string,
+  kind: JobKind,
+  signal?: AbortSignal,
 ): Promise<AnalyzeOutcome> {
+  const deadline = Date.now() + MAX_POLL_MS;
+
+  while (Date.now() < deadline) {
+    await delay(POLL_INTERVAL_MS, signal); // throws AbortError if cancelled
+
+    let res: Response;
+    try {
+      res = await fetch(apiUrl(`/jobs/${jobId}`), { signal });
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      continue; // transient network blip — keep polling
+    }
+
+    if (!res.ok) {
+      if (res.status === 404) {
+        return { ok: false, error: messages.aiUnavailable };
+      }
+      continue;
+    }
+
+    const job = (await res.json()) as {
+      status?: string;
+      result?: unknown;
+      code?: number;
+    };
+
+    if (job.status === "done") {
+      const adapted = adaptBackendAnalysis(job.result);
+      const validation = validateCareerAnalysis(adapted);
+      return validation.valid
+        ? { ok: true, analysis: validation.data }
+        : { ok: false, error: messages.invalidModelResponse };
+    }
+
+    if (job.status === "error") {
+      return { ok: false, error: mapJobError(job.code, kind) };
+    }
+    // status "pending" → keep polling
+  }
+
+  return { ok: false, error: messages.aiUnavailable };
+}
+
+/** Start a job and return its id, or map a submit-time HTTP error. */
+async function startJob(
+  path: string,
+  init: RequestInit,
+  kind: JobKind,
+  signal?: AbortSignal,
+): Promise<AnalyzeOutcome> {
+  const res = await fetch(apiUrl(path), { ...init, signal });
+
   if (!res.ok) {
     if (res.status === 422) {
-      // Client-side input problems: unreadable file, or too-short/invalid text.
       return {
         ok: false,
         error: kind === "file" ? messages.unreadableDocument : messages.shortInput,
       };
     }
-    if (res.status === 503) {
-      // The AI produced an incomplete/invalid result after its retries.
-      return { ok: false, error: messages.invalidModelResponse };
-    }
-    // 500 and everything else → the service could not complete the analysis.
     return { ok: false, error: messages.aiUnavailable };
   }
 
-  let json: unknown;
-  try {
-    json = await res.json();
-  } catch {
-    return { ok: false, error: messages.invalidModelResponse };
+  const data = (await res.json()) as { jobId?: string };
+  if (!data.jobId) {
+    return { ok: false, error: messages.aiUnavailable };
   }
 
-  // /analyze-file wraps the analysis; /analyze-text returns it directly.
-  const backendData = kind === "file" && isRecord(json) ? json.analysis : json;
-
-  const adapted = adaptBackendAnalysis(backendData);
-  const validation = validateCareerAnalysis(adapted);
-  if (!validation.valid) {
-    return { ok: false, error: messages.invalidModelResponse };
-  }
-  return { ok: true, analysis: validation.data };
+  return pollJob(data.jobId, kind, signal);
 }
 
-/** Send pasted CV text to the backend for analysis. */
+/** Send pasted CV text to the backend for analysis (async job + polling). */
 export async function analyzeText(
   cvText: string,
   signal?: AbortSignal,
 ): Promise<AnalyzeOutcome> {
   try {
-    const res = await fetch(apiUrl("/analyze-text"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cvText }),
+    return await startJob(
+      "/analyze-text",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cvText }),
+      },
+      "text",
       signal,
-    });
-    return await handleResponse(res, "text");
+    );
   } catch (error) {
     if (isAbortError(error)) throw error;
     return { ok: false, error: messages.networkError };
   }
 }
 
-/** Upload a CV file (PDF/DOCX/image) to the backend for extraction + analysis. */
+/** Upload a CV file for extraction + analysis (async job + polling). */
 export async function analyzeFile(
   file: File,
   signal?: AbortSignal,
@@ -82,12 +151,12 @@ export async function analyzeFile(
   try {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(apiUrl("/analyze-file"), {
-      method: "POST",
-      body: form,
+    return await startJob(
+      "/analyze-file",
+      { method: "POST", body: form },
+      "file",
       signal,
-    });
-    return await handleResponse(res, "file");
+    );
   } catch (error) {
     if (isAbortError(error)) throw error;
     return { ok: false, error: messages.networkError };

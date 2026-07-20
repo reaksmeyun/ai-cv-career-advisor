@@ -56,17 +56,24 @@ uvicorn main:app --port 8000
 
 ## API
 
+Analysis is **asynchronous** (CPU inference can take minutes): the `POST`
+endpoints start a background job and return a `jobId`; the client polls
+`GET /jobs/{id}` until it is `done`.
+
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
 | `GET` | `/health` | – | `{ status, model, device }` |
-| `POST` | `/analyze-text` | `{ "cvText": "..." }` (≥100 chars) | `CVAnalysis` |
-| `POST` | `/analyze-file` | `multipart/form-data` field `file` | `{ filename, fileType, extractionMethod, extractedCharacters, analysis }` |
+| `POST` | `/analyze-text` | `{ "cvText": "..." }` (≥100 chars) | `{ jobId, status }` |
+| `POST` | `/analyze-file` | `multipart/form-data` field `file` | `{ jobId, status }` |
+| `GET` | `/jobs/{id}` | – | `{ status: pending \| done \| error, result?, code? }` |
 
 ### Error semantics
 
-| Status | Meaning |
+A failed job returns `{ "status": "error", "code": <n>, "detail": "..." }`:
+
+| `code` | Meaning |
 |--------|---------|
-| `422` | Bad input — unreadable/unsupported/oversized file, or too-short text |
+| `422` | Bad input — unreadable/unsupported/oversized file |
 | `503` | The AI could not produce a valid analysis (after bounded retries) |
 | `500` | Unexpected server error |
 
