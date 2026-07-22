@@ -7,7 +7,7 @@ export const messages = {
   shortInput:
     "Please provide more information about your education, experience, projects, or skills.",
   unsupportedFile:
-    "This file type is not supported. Upload a PDF, DOCX, PNG, JPG, or JPEG file.",
+    "This file type is not supported. Upload a PDF or DOCX file, or paste the CV text.",
   fileTooLarge:
     "The selected file is too large. Please upload a smaller document.",
   unreadableDocument:

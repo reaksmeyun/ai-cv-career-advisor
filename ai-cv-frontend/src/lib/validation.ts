@@ -6,16 +6,14 @@ export const MIN_CV_CHARS = 200;
 /** Maximum accepted upload size (bytes). 5 MB. */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
-/** Accepted upload MIME types. */
+/** Accepted upload MIME types (PDF & DOCX — image OCR isn't available server-side). */
 export const ACCEPTED_MIME_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "image/png",
-  "image/jpeg",
 ] as const;
 
 /** Accepted file extensions (fallback when the browser omits a MIME type). */
-export const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".png", ".jpg", ".jpeg"] as const;
+export const ACCEPTED_EXTENSIONS = [".pdf", ".docx"] as const;
 
 /** `accept` attribute value for the file input. */
 export const FILE_ACCEPT_ATTR = [

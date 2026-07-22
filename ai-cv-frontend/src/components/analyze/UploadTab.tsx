@@ -111,7 +111,7 @@ export function UploadTab({
           <span className="text-primary underline">browse</span>
         </p>
         <p id={`${inputId}-hint`} className="mt-1 text-xs text-muted">
-          PDF, DOCX, PNG, JPG, or JPEG — up to 5 MB
+          PDF or DOCX — up to 5 MB
         </p>
       </div>
 
