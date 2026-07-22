@@ -1,6 +1,7 @@
-import { InferenceClient } from "@huggingface/inference";
 import { jsonrepair } from "jsonrepair";
 
+// Hugging Face Inference Providers OpenAI-compatible router.
+const HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions";
 const MODEL_ID = process.env.MODEL_ID || "Qwen/Qwen2.5-1.5B-Instruct";
 const MAX_TOKENS = 1200;
 const MAX_ATTEMPTS = 3;
@@ -267,41 +268,50 @@ function validateAndClean(raw: Record<string, unknown>): FlatAnalysis {
 
 /* ---------------------------- inference ---------------------------- */
 
-let client: InferenceClient | null = null;
-
-function getClient(): InferenceClient {
+async function generateOnce(cvText: string, sample: boolean): Promise<string> {
   const token = process.env.HF_TOKEN;
   if (!token) {
     throw new AiServiceError("The analysis service is not configured. Please try again later.", 502);
   }
-  if (!client) client = new InferenceClient(token);
-  return client;
-}
 
-async function generateOnce(cvText: string, sample: boolean): Promise<string> {
-  const c = getClient();
-  let completion;
+  let res: Response;
   try {
-    completion = await c.chatCompletion({
-      provider: "auto",
-      model: MODEL_ID,
-      messages: [
-        { role: "system", content: "You analyze CVs objectively. Return valid JSON only and never invent facts." },
-        { role: "user", content: buildPrompt(cvText) },
-      ],
-      max_tokens: MAX_TOKENS,
-      temperature: sample ? 0.5 : 0.2,
+    res = await fetch(HF_ROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL_ID,
+        messages: [
+          { role: "system", content: "You analyze CVs objectively. Return valid JSON only and never invent facts." },
+          { role: "user", content: buildPrompt(cvText) },
+        ],
+        max_tokens: MAX_TOKENS,
+        temperature: sample ? 0.5 : 0.2,
+      }),
     });
   } catch (error) {
-    if (error instanceof AiServiceError) throw error;
-    const raw = error instanceof Error ? error.message : String(error);
-    // Log full detail server-side (Vercel function logs); surface a redacted,
-    // truncated reason to help diagnose provider/token/credit issues.
-    console.error("HF inference error:", raw);
-    const safe = raw.replace(/hf_[A-Za-z0-9]+/g, "hf_***").slice(0, 220);
-    throw new AiServiceError(`AI provider call failed: ${safe}`, 502);
+    console.error("HF router network error:", error);
+    throw new AiServiceError("Could not reach the AI provider. Please try again.", 502);
   }
-  const content = completion.choices?.[0]?.message?.content;
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.error("HF router error", res.status, body.slice(0, 500));
+    const hint = body.replace(/hf_[A-Za-z0-9]+/g, "hf_***").slice(0, 200);
+    throw new AiServiceError(`AI provider error ${res.status}: ${hint}`, 502);
+  }
+
+  let data: { choices?: { message?: { content?: string } }[] };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    throw new AiServiceError("The AI provider returned an unreadable response.", 502);
+  }
+
+  const content = data.choices?.[0]?.message?.content;
   if (!content || !content.trim()) {
     throw new AiServiceError("The model returned an empty response. Please try again.", 502);
   }
