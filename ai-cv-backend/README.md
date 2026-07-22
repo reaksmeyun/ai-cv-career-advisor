@@ -1,122 +1,99 @@
 ---
 title: AI CV Career Advisor API
 emoji: 📄
-colorFrom: indigo
+colorFrom: blue
 colorTo: purple
 sdk: docker
 app_port: 7860
 pinned: false
 ---
 
-# AI CV Career Advisor — Backend
+# AI CV Career Advisor — Backend (remote inference)
 
-FastAPI service that extracts text from a CV, runs the **Qwen2.5-1.5B-Instruct**
-model (locally, via llama.cpp), validates the output, and returns structured
-career-analysis JSON. See the [project README](../README.md) for the full
-picture.
+Lightweight FastAPI service that extracts text from a CV (pasted text, PDF, DOCX,
+or image), validates it, and generates structured career-analysis JSON by calling
+**Hugging Face Inference Providers** — no model weights are loaded locally.
+
+## Architecture
+
+```
+Next.js frontend
+  → FastAPI backend (this service)
+    → extract text (pasted / PDF / DOCX / image OCR)
+    → clean + validate
+    → Hugging Face Inference Providers  (InferenceClient, provider="auto")
+    → validate structured JSON
+  → return analysis to the frontend
+```
 
 ## Tech stack
 
 - **FastAPI** + **uvicorn**
-- **llama-cpp-python** running **Qwen2.5-1.5B-Instruct** (GGUF, `Q4_K_M`)
+- **huggingface-hub** `InferenceClient` (remote inference — no local Torch/GGUF)
 - **pypdf** (PDF), **python-docx** (DOCX), **pdf2image** + **pytesseract** +
   **Pillow** (image / scanned-PDF OCR)
 - **json-repair** for tolerant parsing of model output
 
-## Setup
+## Environment variables
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `HF_TOKEN` | yes (for analysis) | – | Hugging Face token with Inference Providers access |
+| `MODEL_ID` | no | `Qwen/Qwen2.5-1.5B-Instruct` | Model to call via Inference Providers |
+| `ALLOWED_ORIGINS` | no | `http://localhost:3000,...` | Comma-separated allowed CORS origins |
+| `FRONTEND_URL` | no | – | A single production frontend origin to allow |
+
+> `/health` works even without `HF_TOKEN`; analysis requests return a clear
+> error until the token is set.
+
+## Run locally
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+export HF_TOKEN=hf_your_token_here          # from https://huggingface.co/settings/tokens
+uvicorn main:app --reload --port 8000
 ```
 
-`requirements.txt` uses a prebuilt CPU wheel index for `llama-cpp-python`, so no
-C++ compiler is required.
+- API docs: <http://localhost:8000/docs>
+- Health:   <http://localhost:8000/health>
 
-### System dependency (for image / scanned-PDF OCR)
+For image / scanned-PDF OCR you also need Tesseract locally:
+`sudo apt-get install -y tesseract-ocr poppler-utils`.
 
-Text paste and text-based PDFs/DOCX work without it. For **image** CVs or
-scanned PDFs you need the Tesseract binary:
+## Run with Docker
 
 ```bash
-sudo apt-get install -y tesseract-ocr        # Debian/Ubuntu
+docker build -t ai-cv-backend .
+docker run -p 7860:7860 -e HF_TOKEN=hf_your_token_here ai-cv-backend
 ```
 
-## Run
+## Hugging Face Space
 
-```bash
-uvicorn main:app --port 8000
-```
-
-- The **first run downloads the ~1 GB GGUF model** to the Hugging Face cache;
-  subsequent starts load it in seconds.
-- Wait for **`Qwen model is ready.`** before sending requests.
-- Interactive API docs: <http://localhost:8000/docs>
+1. Create a **Docker** Space and push this folder to it.
+2. **Settings → Variables and secrets** → add secret **`HF_TOKEN`** (and
+   optionally `MODEL_ID`, `FRONTEND_URL`).
+3. The Space builds and starts quickly (no model download).
 
 ## API
 
-Analysis is **asynchronous** (CPU inference can take minutes): the `POST`
-endpoints start a background job and return a `jobId`; the client polls
-`GET /jobs/{id}` until it is `done`.
+Analysis is **asynchronous** (submit → poll):
 
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
-| `GET` | `/health` | – | `{ status, model, device }` |
-| `POST` | `/analyze-text` | `{ "cvText": "..." }` (≥100 chars) | `{ jobId, status }` |
+| `GET` | `/health` | – | `{ status, modelMode, modelId, tokenConfigured }` |
+| `POST` | `/analyze-text` | `{ "cvText": "..." }` | `{ jobId, status }` |
 | `POST` | `/analyze-file` | `multipart/form-data` field `file` | `{ jobId, status }` |
 | `GET` | `/jobs/{id}` | – | `{ status: pending \| done \| error, result?, code? }` |
-
-### Error semantics
 
 A failed job returns `{ "status": "error", "code": <n>, "detail": "..." }`:
 
 | `code` | Meaning |
 |--------|---------|
-| `422` | Bad input — unreadable/unsupported/oversized file |
-| `503` | The AI could not produce a valid analysis (after bounded retries) |
+| `422` | Bad input — unreadable/unsupported file |
+| `502` | Remote inference provider/token failure |
+| `503` | The AI produced an incomplete/invalid analysis |
 | `500` | Unexpected server error |
 
-## How it works
-
-1. **Validate** file type, size, and content (see `document_service.py`).
-2. **Extract** text — pypdf / python-docx / OCR — then clean and normalize it.
-3. **Analyze** with Qwen (`qwen_service.py`): a strict JSON prompt, grammar-
-   constrained JSON output, then robust post-processing:
-   - strip code fences / trailing commas, repair malformed JSON
-   - recover mangled field-name keys (aliases)
-   - validate against the schema; **bounded retries** (no infinite loop)
-4. **Return** structured JSON. Uploaded files are held in memory only and are
-   never written to disk.
-
-## Project structure
-
-```
-ai-cv-backend/
-├── main.py                 # FastAPI app + endpoints + CORS
-├── schemas.py              # Pydantic response models (CVAnalysis, …)
-├── document_service.py     # PDF / DOCX / OCR extraction + validation
-├── qwen_service.py         # llama.cpp model load, prompt, parse, validate, retry
-├── test_qwen.py            # Standalone model smoke-test script
-└── requirements.txt
-```
-
-## Configuration
-
-Key constants live at the top of `qwen_service.py`:
-
-| Constant | Default | Purpose |
-|----------|---------|---------|
-| `MODEL_REPO` / `MODEL_FILE` | Qwen2.5-1.5B GGUF `Q4_K_M` | Which model to load |
-| `N_CTX` | `4096` | Context window |
-| `MAX_NEW_TOKENS` | `900` | Generation cap (raise for longer output, lower for speed) |
-| `MAX_ATTEMPTS` | `3` | Bounded retries on malformed output |
-
-CORS currently allows `http://localhost:3000` (see `main.py`). Update it for
-other frontend origins.
-
-## Notes on performance
-
-- CPU inference of the 1.5B model takes roughly **1–3 minutes** per analysis.
-- The `Q4_K_M` GGUF uses about **2–2.5 GB** of RAM. For faster results, run on a
-  GPU or use a larger model — only `MODEL_REPO` / `MODEL_FILE` need to change.
+Tokens, stack traces, and local paths are never exposed in API responses.

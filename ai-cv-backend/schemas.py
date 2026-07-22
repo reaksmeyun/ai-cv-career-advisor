@@ -72,15 +72,8 @@ class CVAnalysis(BaseModel):
     learningRecommendations: list[LearningRecommendation]
 
 
-class AnalyzeFileResponse(BaseModel):
-    filename: str
-    fileType: str
-    extractionMethod: str
-    extractedCharacters: int
-    analysis: CVAnalysis
-
-
 class HealthResponse(BaseModel):
     status: str
-    model: str
-    device: str
+    modelMode: str
+    modelId: str
+    tokenConfigured: bool

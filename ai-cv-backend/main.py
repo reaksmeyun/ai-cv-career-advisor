@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from document_service import extract_document_text
-from qwen_service import MODEL_NAME, qwen_service
+from qwen_service import MODEL_NAME, ModelServiceError, qwen_service
 from schemas import AnalyzeTextRequest, HealthResponse
 
 
@@ -23,15 +23,20 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Allowed frontend origins. Set ALLOWED_ORIGINS (comma-separated) in production
-# to include your deployed frontend URL, e.g.
-#   ALLOWED_ORIGINS=https://your-app.vercel.app
+# Allowed frontend origins. Configure via env:
+#   ALLOWED_ORIGINS=https://your-app.vercel.app,https://foo.com   (comma-separated)
+#   FRONTEND_URL=https://your-app.vercel.app                       (single URL)
 _default_origins = "http://localhost:3000,http://127.0.0.1:3000"
 allowed_origins = [
     origin.strip()
     for origin in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
     if origin.strip()
 ]
+
+# Also allow a single production frontend URL via FRONTEND_URL.
+_frontend_url = os.getenv("FRONTEND_URL", "").strip()
+if _frontend_url and _frontend_url not in allowed_origins:
+    allowed_origins.append(_frontend_url)
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,10 +64,12 @@ def root() -> dict[str, str]:
     tags=["System"],
 )
 def health() -> HealthResponse:
+    # Stays available even when HF_TOKEN is not configured.
     return HealthResponse(
         status="healthy",
-        model=MODEL_NAME,
-        device="cpu",
+        modelMode="remote-inference",
+        modelId=MODEL_NAME,
+        tokenConfigured=qwen_service.token_configured(),
     )
 
 
@@ -103,6 +110,8 @@ def _run_text_job(job_id: str, cv_text: str) -> None:
     try:
         analysis = qwen_service.analyze(cv_text)
         _set_job(job_id, status="done", result=analysis.model_dump())
+    except ModelServiceError as error:
+        _set_job(job_id, status="error", code=error.code, detail=error.message)
     except ValueError as error:
         _set_job(job_id, status="error", code=503, detail=str(error))
     except Exception as error:
@@ -127,6 +136,8 @@ def _run_file_job(job_id: str, filename: str, file_bytes: bytes) -> None:
         # Analysis problems are AI-side (incomplete model output) -> 503.
         analysis = qwen_service.analyze(extraction.text)
         _set_job(job_id, status="done", result=analysis.model_dump())
+    except ModelServiceError as error:
+        _set_job(job_id, status="error", code=error.code, detail=error.message)
     except ValueError as error:
         _set_job(job_id, status="error", code=503, detail=str(error))
     except Exception as error:

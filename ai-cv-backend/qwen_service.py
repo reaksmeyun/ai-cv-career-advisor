@@ -7,18 +7,26 @@ import threading
 from typing import Any
 
 import json_repair
-from llama_cpp import Llama
+from huggingface_hub import InferenceClient
 
 from schemas import CVAnalysis
 
 
-# GGUF (llama.cpp) model: Q4_K_M is ~1GB (vs ~3.6GB bf16) and faster on CPU.
-MODEL_REPO = "Qwen/Qwen2.5-1.5B-Instruct-GGUF"
-MODEL_FILE = "qwen2.5-1.5b-instruct-q4_k_m.gguf"
-MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct (GGUF Q4_K_M)"
+# Remote inference via Hugging Face Inference Providers. No local model weights
+# are loaded — the heavy work runs on Hugging Face's infrastructure, so this
+# backend stays lightweight and starts instantly.
+DEFAULT_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+MODEL_ID = os.getenv("MODEL_ID", DEFAULT_MODEL_ID)
+MODEL_NAME = MODEL_ID  # exported for callers / health endpoint
 
-# Context window for llama.cpp (input prompt + generated tokens).
-N_CTX = 4096
+
+class ModelServiceError(Exception):
+    """A user-safe remote-inference failure. `code` maps to an HTTP status."""
+
+    def __init__(self, message: str, code: int = 502) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
 
 ALLOWED_PROFILE_LEVELS = {
     "Student",
@@ -46,14 +54,15 @@ ALLOWED_LEARNING_LEVELS = {
     "Advanced",
 }
 
-# Token budget: enough for the full JSON (summary + 3 roles + skills + missing
-# skills + learning recs), but capped so CPU generation stays fast and within
-# memory. Generation time scales with this number, so keep it tight.
-MAX_NEW_TOKENS = 1300
+# Output token budget for the JSON analysis.
+MAX_NEW_TOKENS = 1200
+
+# CV text bounds enforced by the service (the request schema also validates).
+MIN_CV_CHARS = 50
+MAX_CV_CHARS = 20_000
 
 # Bounded retries so malformed model output gets a few chances without ever
-# looping forever. Later attempts sample (vary output) instead of repeating
-# the same greedy result.
+# looping forever. Later attempts sample (vary output) for a different result.
 MAX_ATTEMPTS = 3
 
 # Generic, realistic entry-level roles used only to pad up to three when the
@@ -86,22 +95,27 @@ FALLBACK_ROLES: list[dict[str, Any]] = [
 
 class QwenCVService:
     def __init__(self) -> None:
+        self.model_id = MODEL_ID
         self.model_name = MODEL_NAME
-        self.device = "cpu"
         self._lock = threading.Lock()
+        self._client: InferenceClient | None = None
+        # No model is loaded here — inference is remote. The client is created
+        # lazily on first use so the app starts fine even without HF_TOKEN.
 
-        print("Loading Qwen GGUF model via llama.cpp...")
+    @staticmethod
+    def token_configured() -> bool:
+        return bool(os.getenv("HF_TOKEN"))
 
-        # from_pretrained downloads + caches the GGUF on first run (~1GB).
-        self.llm = Llama.from_pretrained(
-            repo_id=MODEL_REPO,
-            filename=MODEL_FILE,
-            n_ctx=N_CTX,
-            n_threads=os.cpu_count() or 4,
-            verbose=False,
-        )
-
-        print("Qwen model is ready.")
+    def _get_client(self) -> InferenceClient:
+        token = os.getenv("HF_TOKEN")
+        if not token:
+            raise ModelServiceError(
+                "The analysis service is not configured. Please try again later.",
+                code=502,
+            )
+        if self._client is None:
+            self._client = InferenceClient(api_key=token, provider="auto")
+        return self._client
 
     def build_prompt(self, cv_text: str) -> str:
         return f"""
@@ -600,37 +614,50 @@ CV TEXT:
             },
         ]
 
-        params: dict[str, Any] = {
-            "messages": messages,
-            "max_tokens": MAX_NEW_TOKENS,
-            "repeat_penalty": 1.12,
-            # Grammar-constrain the output to a valid JSON object, which removes
-            # the malformed-JSON failure class (quotes, commas, comments, etc.).
-            "response_format": {"type": "json_object"},
-        }
+        client = self._get_client()
 
-        if do_sample:
-            # Vary the output so a retry can escape a bad result.
-            params.update(temperature=0.5, top_p=0.9)
-        else:
-            params.update(temperature=0.0)
+        # Low temperature for stable JSON; retries nudge it up for variety.
+        temperature = 0.5 if do_sample else 0.2
 
-        # Prevent two CPU-heavy generations from running together.
-        with self._lock:
-            output = self.llm.create_chat_completion(**params)
+        try:
+            with self._lock:
+                completion = client.chat_completion(
+                    model=self.model_id,
+                    messages=messages,
+                    max_tokens=MAX_NEW_TOKENS,
+                    temperature=temperature,
+                )
+        except ModelServiceError:
+            raise
+        except Exception as error:  # provider / network / unavailable model
+            raise ModelServiceError(
+                "The analysis provider is currently unavailable. Please try again.",
+                code=502,
+            ) from error
 
-        return output["choices"][0]["message"].get("content") or ""
+        try:
+            content = completion.choices[0].message.content
+        except (AttributeError, IndexError, KeyError, TypeError):
+            content = None
+
+        if not content or not content.strip():
+            raise ModelServiceError(
+                "The model returned an empty response. Please try again.",
+                code=502,
+            )
+
+        return content
 
     def analyze(self, cv_text: str) -> CVAnalysis:
         cleaned_cv = cv_text.strip()
 
-        if len(cleaned_cv) < 100:
+        if len(cleaned_cv) < MIN_CV_CHARS:
             raise ValueError(
-                "CV text must contain at least 100 characters."
+                f"CV text must contain at least {MIN_CV_CHARS} characters."
             )
 
-        if len(cleaned_cv) > 12_000:
-            cleaned_cv = cleaned_cv[:12_000]
+        if len(cleaned_cv) > MAX_CV_CHARS:
+            cleaned_cv = cleaned_cv[:MAX_CV_CHARS]
 
         last_error: Exception | None = None
 
