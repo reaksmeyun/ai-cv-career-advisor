@@ -1,7 +1,13 @@
 import { jsonrepair } from "jsonrepair";
 
-// Hugging Face Inference Providers OpenAI-compatible router.
-const HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions";
+// Any OpenAI-compatible chat-completions provider. Defaults to Hugging Face's
+// router; set LLM_BASE_URL + LLM_API_KEY to use Groq, OpenRouter, Together, etc.
+//   Groq (free):  LLM_BASE_URL=https://api.groq.com/openai/v1
+//                 LLM_API_KEY=gsk_...   MODEL_ID=llama-3.1-8b-instant
+const LLM_BASE_URL = (
+  process.env.LLM_BASE_URL || "https://router.huggingface.co/v1"
+).replace(/\/+$/, "");
+const LLM_API_KEY = process.env.LLM_API_KEY || process.env.HF_TOKEN || "";
 const MODEL_ID = process.env.MODEL_ID || "Qwen/Qwen2.5-1.5B-Instruct";
 const MAX_TOKENS = 1200;
 const MAX_ATTEMPTS = 3;
@@ -269,17 +275,16 @@ function validateAndClean(raw: Record<string, unknown>): FlatAnalysis {
 /* ---------------------------- inference ---------------------------- */
 
 async function generateOnce(cvText: string, sample: boolean): Promise<string> {
-  const token = process.env.HF_TOKEN;
-  if (!token) {
+  if (!LLM_API_KEY) {
     throw new AiServiceError("The analysis service is not configured. Please try again later.", 502);
   }
 
   let res: Response;
   try {
-    res = await fetch(HF_ROUTER_URL, {
+    res = await fetch(`${LLM_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${LLM_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -300,7 +305,7 @@ async function generateOnce(cvText: string, sample: boolean): Promise<string> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     console.error("HF router error", res.status, body.slice(0, 500));
-    const hint = body.replace(/hf_[A-Za-z0-9]+/g, "hf_***").slice(0, 200);
+    const hint = body.replace(/(hf|gsk|sk)_[A-Za-z0-9]+/g, "$1_***").slice(0, 200);
     throw new AiServiceError(`AI provider error ${res.status}: ${hint}`, 502);
   }
 
