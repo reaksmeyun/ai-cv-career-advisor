@@ -74,10 +74,7 @@ cp .env.example .env.local               # defaults point at http://localhost:80
 npm run dev                              # http://localhost:3000
 ```
 
-Open **http://localhost:3000**, go to **Analyze CV**, and try the example CV.
-
-> **Demo without the backend:** set `NEXT_PUBLIC_USE_MOCK=true` in
-> `ai-cv-frontend/.env.local` to use built-in example data (no AI call).
+Open **https://ai-cv-career-advisor.vercel.app/analyze**, go to **Analyze CV**, and try the example CV.
 
 ---
 
