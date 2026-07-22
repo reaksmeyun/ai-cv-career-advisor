@@ -294,7 +294,12 @@ async function generateOnce(cvText: string, sample: boolean): Promise<string> {
     });
   } catch (error) {
     if (error instanceof AiServiceError) throw error;
-    throw new AiServiceError("The analysis provider is currently unavailable. Please try again.", 502);
+    const raw = error instanceof Error ? error.message : String(error);
+    // Log full detail server-side (Vercel function logs); surface a redacted,
+    // truncated reason to help diagnose provider/token/credit issues.
+    console.error("HF inference error:", raw);
+    const safe = raw.replace(/hf_[A-Za-z0-9]+/g, "hf_***").slice(0, 220);
+    throw new AiServiceError(`AI provider call failed: ${safe}`, 502);
   }
   const content = completion.choices?.[0]?.message?.content;
   if (!content || !content.trim()) {
